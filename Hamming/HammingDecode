@@ -1,3 +1,8 @@
+#Universidad del Valle de Guatemala
+#Redes seccion 20
+#Laboratorio 2
+#Carlos Lopez - Brian Carrillo
+
 def decode_hamming(hamming_code):
     n = len(hamming_code)
     r = 0
@@ -8,13 +13,13 @@ def decode_hamming(hamming_code):
         parity = 0
         for j in range(1, n + 1):
             if ((j >> i) & 1) == 1:
-                parity ^= int(hamming_code[j - 1])
+                parity ^= int(hamming_code[n - j])
         if parity != 0:
             error_pos += 2**i
     if error_pos != 0:
         print(f"Se detectaron y corrigieron errores en la posición {error_pos}.")
-        hamming_code[error_pos - 1] = '1' if hamming_code[error_pos - 1] == '0' else '0'
-    original_message = [hamming_code[i - 1] for i in range(1, n + 1) if (i & (i - 1)) != 0]
+        hamming_code[n - error_pos] = '1' if hamming_code[n - error_pos] == '0' else '0'
+    original_message = [hamming_code[n - i] for i in range(1, n + 1) if (i & (i - 1)) != 0]
     return ''.join(original_message)
 
 if __name__ == "__main__":
