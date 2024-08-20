@@ -11,6 +11,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "simple-xmpp": "^2.3.1"
+    "strophe.js": "^3.0.1"
   }
 }

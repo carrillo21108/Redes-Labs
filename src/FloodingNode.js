@@ -1,4 +1,4 @@
-const XMPP = require("simple-xmpp");
+const Strophe = require("strophe.js");
 const fs = require("fs");
 
 class FloodingNode {
@@ -7,21 +7,22 @@ class FloodingNode {
     this.password = password;
     this.jid = null;
     this.neighbors = [];
-    this.xmpp = new XMPP();
+    this.connection = null;
     this.messagesSeen = new Set();
 
     this.loadConfigurations();
+    return;
     this.setupXMPP();
   }
 
   loadConfigurations() {
-    const topoData = JSON.parse(fs.readFileSync("topo-flood.txt", "utf8"));
+    const topoData = JSON.parse(fs.readFileSync("data/topo-1.txt", "utf8"));
     if (topoData.type !== "topo" || !topoData.config[this.nodeId]) {
       throw new Error("Invalid topology configuration or node not found");
     }
     this.neighbors = topoData.config[this.nodeId].map(String);
 
-    const namesData = JSON.parse(fs.readFileSync("names-flood.txt", "utf8"));
+    const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
     if (namesData.type !== "names" || !namesData.config[this.nodeId]) {
       throw new Error("Invalid names configuration or node not found");
     }
@@ -32,21 +33,26 @@ class FloodingNode {
   }
 
   setupXMPP() {
-    this.xmpp.connect({
-      jid: this.jid,
-      password: this.password,
-      host: "alumchat.lol",
-      port: 5222,
-    });
+    this.connection = new Strophe.Connection(
+      "wss://alumchat.lol:5280/websocket"
+    );
+    this.connection.connect(this.jid, this.password, this.onConnect.bind(this));
+  }
 
-    this.xmpp.on("online", () => {
+  onConnect(status) {
+    if (status === Strophe.Status.CONNECTED) {
       console.log("Connected as " + this.jid);
+      this.connection.addHandler(
+        this.onMessage.bind(this),
+        null,
+        "message",
+        "chat"
+      );
+      this.connection.send($pres().tree());
       this.discoverNeighbors();
-    });
-
-    this.xmpp.on("chat", (from, message) => {
-      this.handleMessage(JSON.parse(message));
-    });
+    } else if (status === Strophe.Status.DISCONNECTED) {
+      console.log("Disconnected");
+    }
   }
 
   discoverNeighbors() {
@@ -71,7 +77,20 @@ class FloodingNode {
 
   sendMessage(message) {
     message.hops = (message.hops || 0) + 1;
-    this.xmpp.send(message.to, JSON.stringify(message));
+    const msg = $msg({ to: message.to, from: this.jid, type: "chat" })
+      .c("body")
+      .t(JSON.stringify(message));
+    this.connection.send(msg.tree());
+  }
+
+  onMessage(stanza) {
+    const from = stanza.getAttribute("from");
+    const body = stanza.getElementsByTagName("body")[0];
+    if (body) {
+      const message = JSON.parse(body.textContent);
+      this.handleMessage(message);
+    }
+    return true;
   }
 
   handleMessage(message) {

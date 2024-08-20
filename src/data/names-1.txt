@@ -1,11 +1,11 @@
 {
-  "type": "topo",
+  "type": "names",
   "config": {
-    "A": ["B", "C"],
-    "B": ["A", "D", "E"],
-    "C": ["A", "F"],
-    "D": ["B"],
-    "E": ["B", "F"],
-    "F": ["C", "E"]
+    "A": "nodeA@alumchat.lol",
+    "B": "nodeB@alumchat.lol",
+    "C": "nodeC@alumchat.lol",
+    "D": "nodeD@alumchat.lol",
+    "E": "nodeE@alumchat.lol",
+    "F": "nodeF@alumchat.lol"
   }
 }
