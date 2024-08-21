@@ -1,52 +1,116 @@
-const XMPP = require("simple-xmpp");
+const Strophe = require("strophe.js");
+const fs = require("fs");
 
 class LSRNode {
-  constructor(jid, password, neighbors) {
-    this.jid = jid;
+  constructor(nodeId, password) {
+    this.nodeId = nodeId;
     this.password = password;
-    this.neighbors = neighbors;
-    this.xmpp = new XMPP();
+    this.jid = null;
+    this.neighbors = [];
+    this.connection = null;
     this.messagesSeen = new Set();
     this.topologyMap = new Map();
     this.routingTable = new Map();
 
+    this.loadConfigurations();
     this.setupXMPP();
   }
 
-  setupXMPP() {
-    this.xmpp.connect({
-      jid: this.jid,
-      password: this.password,
-      host: "alumchat.lol",
-      port: 5222,
+  loadConfigurations() {
+    const topoData = JSON.parse(fs.readFileSync("data/topo-flood.txt", "utf8"));
+    const namesData = JSON.parse(
+      fs.readFileSync("data/names-flood.txt", "utf8")
+    );
+
+    if (topoData.type !== "topo" || !topoData.config[this.nodeId]) {
+      throw new Error("Invalid topology configuration or node not found");
+    }
+    if (namesData.type !== "names" || !namesData.config[this.nodeId]) {
+      throw new Error("Invalid names configuration or node not found");
+    }
+
+    this.jid = namesData.config[this.nodeId];
+
+    // Convert neighbor node IDs to JIDs
+    this.neighbors = topoData.config[this.nodeId].map((neighborId) => {
+      const neighborJid = namesData.config[neighborId];
+      if (!neighborJid) {
+        throw new Error(`No JID found for neighbor node ${neighborId}`);
+      }
+      return neighborJid;
     });
 
-    this.xmpp.on("online", () => {
-      console.log("Connected as " + this.jid);
-      this.discoverNeighbors();
-      setInterval(() => this.broadcastLinkState(), 30000); // Update every 30 seconds
-    });
+    console.log(`Node ${this.nodeId} configured with JID ${this.jid}`);
+    console.log(`Neighbors: ${this.neighbors.join(", ")}`);
 
-    this.xmpp.on("chat", (from, message) => {
-      this.handleMessage(JSON.parse(message));
+    // Initialize topologyMap with this node's information
+    this.topologyMap.set(this.jid, {
+      node: this.jid,
+      neighbors: this.neighbors,
+      timestamp: Date.now(),
     });
   }
 
+  setupXMPP() {
+    this.connection = new Strophe.Connection(
+      "wss://alumchat.lol:5280/websocket"
+    );
+    this.connection.connect(this.jid, this.password, this.onConnect.bind(this));
+  }
+
+  onConnect(status) {
+    if (status === Strophe.Status.CONNECTED) {
+      console.log("Connected as " + this.jid);
+      this.connection.addHandler(
+        this.onMessage.bind(this),
+        null,
+        "message",
+        "chat"
+      );
+      this.connection.send($pres().tree());
+      this.discoverNeighbors();
+      setInterval(() => this.broadcastLinkState(), 30000); // Update every 30 seconds
+    } else if (status === Strophe.Status.DISCONNECTED) {
+      console.log("Disconnected");
+    }
+  }
+
   discoverNeighbors() {
-    this.neighbors.forEach((neighbor) => {
-      this.sendMessage({
-        type: "hello",
-        from: this.jid,
-        to: neighbor,
-        hops: 0,
-        payload: "Hello neighbor!",
-      });
+    this.neighbors.forEach((neighborId) => {
+      const neighborJid = this.resolveJid(neighborId);
+      if (neighborJid) {
+        this.sendMessage({
+          type: "hello",
+          from: this.jid,
+          to: neighborJid,
+          hops: 0,
+          payload: "Hello neighbor!",
+        });
+      }
     });
+  }
+
+  resolveJid(nodeId) {
+    const namesData = JSON.parse(fs.readFileSync("names-flood.txt", "utf8"));
+    return namesData.config[nodeId];
   }
 
   sendMessage(message) {
     message.hops = (message.hops || 0) + 1;
-    this.xmpp.send(message.to, JSON.stringify(message));
+    const msg = $msg({ to: message.to, from: this.jid, type: "chat" })
+      .c("body")
+      .t(JSON.stringify(message));
+    this.connection.send(msg.tree());
+  }
+
+  onMessage(stanza) {
+    const from = stanza.getAttribute("from");
+    const body = stanza.getElementsByTagName("body")[0];
+    if (body) {
+      const message = JSON.parse(body.textContent);
+      this.handleMessage(message);
+    }
+    return true;
   }
 
   handleMessage(message) {
@@ -71,9 +135,6 @@ class LSRNode {
 
   handleHello(message) {
     console.log(`Received hello from ${message.from}`);
-    if (!this.neighbors.includes(message.from)) {
-      this.neighbors.push(message.from);
-    }
   }
 
   handleChatMessage(message) {
@@ -106,8 +167,8 @@ class LSRNode {
         timestamp: Date.now(),
       }),
     };
-    this.neighbors.forEach((neighbor) => {
-      this.sendMessage({ ...linkState, to: neighbor });
+    this.neighbors.forEach((neighborJid) => {
+      this.sendMessage({ ...linkState, to: neighborJid });
     });
   }
 
@@ -119,11 +180,12 @@ class LSRNode {
       this.recalculateRoutes();
 
       // Forward the update to neighbors
-      this.neighbors.forEach((neighbor) => {
-        if (neighbor !== message.from) {
+      this.neighbors.forEach((neighborId) => {
+        const neighborJid = this.resolveJid(neighborId);
+        if (neighborJid && neighborJid !== message.from) {
           this.sendMessage({
             ...message,
-            to: neighbor,
+            to: neighborJid,
             hops: message.hops + 1,
           });
         }
@@ -179,10 +241,15 @@ class LSRNode {
   }
 
   sendChatMessage(to, payload) {
+    const toJid = this.resolveJid(to);
+    if (!toJid) {
+      console.log(`Cannot resolve JID for node ${to}`);
+      return;
+    }
     const message = {
       type: "message",
       from: this.jid,
-      to: to,
+      to: toJid,
       hops: 0,
       payload: payload,
       headers: [],
@@ -191,7 +258,5 @@ class LSRNode {
   }
 }
 
-const node1 = new LSRNode("node1@alumchat.lol", "password1", [
-  "node2@alumchat.lol",
-  "node3@alumchat.lol",
-]);
+// Usage
+const node = new LSRNode("A", "passwordA");

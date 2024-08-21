@@ -17,16 +17,25 @@ class FloodingNode {
 
   loadConfigurations() {
     const topoData = JSON.parse(fs.readFileSync("data/topo-1.txt", "utf8"));
+    const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
+
     if (topoData.type !== "topo" || !topoData.config[this.nodeId]) {
       throw new Error("Invalid topology configuration or node not found");
     }
-    this.neighbors = topoData.config[this.nodeId].map(String);
-
-    const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
     if (namesData.type !== "names" || !namesData.config[this.nodeId]) {
       throw new Error("Invalid names configuration or node not found");
     }
+
     this.jid = namesData.config[this.nodeId];
+
+    // Convert neighbor node IDs to JIDs
+    this.neighbors = topoData.config[this.nodeId].map((neighborId) => {
+      const neighborJid = namesData.config[neighborId];
+      if (!neighborJid) {
+        throw new Error(`No JID found for neighbor node ${neighborId}`);
+      }
+      return neighborJid;
+    });
 
     console.log(`Node ${this.nodeId} configured with JID ${this.jid}`);
     console.log(`Neighbors: ${this.neighbors.join(", ")}`);
