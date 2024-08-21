@@ -1,4 +1,4 @@
-const Strophe = require("strophe.js");
+const { client, xml } = require("@xmpp/client");
 const fs = require("fs");
 
 class FloodingNode {
@@ -7,11 +7,13 @@ class FloodingNode {
     this.password = password;
     this.jid = null;
     this.neighbors = [];
-    this.connection = null;
+    this.xmpp = null;
     this.messagesSeen = new Set();
+    this.onlinePromise = new Promise((resolve) => {
+      this.resolveOnline = resolve;
+    });
 
     this.loadConfigurations();
-    return;
     this.setupXMPP();
   }
 
@@ -42,64 +44,49 @@ class FloodingNode {
   }
 
   setupXMPP() {
-    this.connection = new Strophe.Connection(
-      "wss://alumchat.lol:5280/websocket"
-    );
-    this.connection.connect(this.jid, this.password, this.onConnect.bind(this));
-  }
-
-  onConnect(status) {
-    if (status === Strophe.Status.CONNECTED) {
-      console.log("Connected as " + this.jid);
-      this.connection.addHandler(
-        this.onMessage.bind(this),
-        null,
-        "message",
-        "chat"
-      );
-      this.connection.send($pres().tree());
-      this.discoverNeighbors();
-    } else if (status === Strophe.Status.DISCONNECTED) {
-      console.log("Disconnected");
-    }
-  }
-
-  discoverNeighbors() {
-    this.neighbors.forEach((neighborId) => {
-      const neighborJid = this.resolveJid(neighborId);
-      if (neighborJid) {
-        this.sendMessage({
-          type: "hello",
-          from: this.jid,
-          to: neighborJid,
-          hops: 0,
-          payload: "Hello neighbor!",
-        });
-      }
+    const [username, domain] = this.jid.split("@");
+    this.xmpp = client({
+      service: `ws://${domain}:7070/ws/`,
+      domain: domain,
+      username: username,
+      password: this.password,
     });
+
+    this.xmpp.on("online", this.onConnect.bind(this));
+    this.xmpp.on("stanza", this.onStanza.bind(this));
+    this.xmpp.on("error", (err) => console.error("XMPP error:", err));
+
+    this.xmpp.start().catch(console.error);
   }
 
-  resolveJid(nodeId) {
-    const namesData = JSON.parse(fs.readFileSync("names-flood.txt", "utf8"));
-    return namesData.config[nodeId];
+  async onConnect(address) {
+    console.log("Connected as " + address.toString());
+    await this.xmpp.send(xml("presence"));
+    this.resolveOnline();
   }
 
-  sendMessage(message) {
+  async sendMessageToJid(jid, message) {
+    await this.sendMessage({ ...message, to: jid });
+  }
+
+  async sendMessage(message) {
     message.hops = (message.hops || 0) + 1;
-    const msg = $msg({ to: message.to, from: this.jid, type: "chat" })
-      .c("body")
-      .t(JSON.stringify(message));
-    this.connection.send(msg.tree());
+    const stanza = xml(
+      "message",
+      { to: message.to, from: this.jid, type: "chat" },
+      xml("body", {}, JSON.stringify(message))
+    );
+    await this.xmpp.send(stanza);
   }
 
-  onMessage(stanza) {
-    const from = stanza.getAttribute("from");
-    const body = stanza.getElementsByTagName("body")[0];
-    if (body) {
-      const message = JSON.parse(body.textContent);
-      this.handleMessage(message);
+  onStanza(stanza) {
+    if (stanza.is("message") && stanza.attrs.type === "chat") {
+      const body = stanza.getChild("body");
+      if (body) {
+        const message = JSON.parse(body.text());
+        this.handleMessage(message);
+      }
     }
-    return true;
   }
 
   handleMessage(message) {
@@ -132,9 +119,8 @@ class FloodingNode {
   }
 
   floodMessage(message) {
-    this.neighbors.forEach((neighborId) => {
-      const neighborJid = this.resolveJid(neighborId);
-      if (neighborJid && neighborJid !== message.from) {
+    this.neighbors.forEach((neighborJid) => {
+      if (neighborJid !== message.from) {
         const forwardedMessage = { ...message, hops: message.hops + 1 };
         this.sendMessage({ ...forwardedMessage, to: neighborJid });
       }
@@ -142,15 +128,10 @@ class FloodingNode {
   }
 
   sendChatMessage(to, payload) {
-    const toJid = this.resolveJid(to);
-    if (!toJid) {
-      console.log(`Cannot resolve JID for node ${to}`);
-      return;
-    }
     const message = {
       type: "message",
       from: this.jid,
-      to: toJid,
+      to: to,
       hops: 0,
       payload: payload,
       headers: [],
@@ -159,4 +140,33 @@ class FloodingNode {
   }
 }
 
-const node = new FloodingNode("A", "passwordA");
+// Function to initialize nodes sequentially
+async function initializeNodesSequentially(nodeConfigs) {
+  const nodes = [];
+  for (const config of nodeConfigs) {
+    const node = new FloodingNode(config.nodeId, config.password);
+    await node.onlinePromise;
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+// Usage
+const nodeConfigs = [
+  { nodeId: "A", password: "prueba2024" },
+  { nodeId: "B", password: "prueba2024" },
+  { nodeId: "C", password: "prueba2024" },
+  { nodeId: "D", password: "prueba2024" },
+  { nodeId: "E", password: "prueba2024" },
+  { nodeId: "F", password: "prueba2024" },
+  { nodeId: "G", password: "prueba2024" },
+  { nodeId: "H", password: "prueba2024" },
+  { nodeId: "I", password: "prueba2024" },
+];
+
+initializeNodesSequentially(nodeConfigs).then((nodes) => {
+  nodes[0].sendMessageToJid("bca_h@alumchat.lol", {
+    type: "message",
+    from: "bca_a@alumchat.lol",
+  });
+});

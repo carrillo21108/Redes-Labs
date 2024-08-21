@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "strophe.js": "^3.0.1"
+    "strophe.js": "1.6.2",
+    "@xmpp/client": "^0.13.1"
   }
 }
