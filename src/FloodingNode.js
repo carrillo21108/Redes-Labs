@@ -202,7 +202,6 @@ async function initializeNode(nodeConfigs, selectedNodeId) {
 
   const nodes = await initializeNodesSequentially(filteredNodeConfig);
 
-  await question("Press any key when all nodes are connected... ");
   const role = await question("Enter the role (sender/receiver): ");
 
   if (role === "sender") {
@@ -214,7 +213,7 @@ async function initializeNode(nodeConfigs, selectedNodeId) {
       message
     );
   } else {
-    console.log("Waiting for messages...");
+    console.log("Waiting for messages... ");
   }
 }
 
