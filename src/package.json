@@ -12,7 +12,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@xmpp/client": "^0.13.1",
     "strophe.js": "1.6.2",
-    "@xmpp/client": "^0.13.1"
+    "uuid": "^10.0.0"
   }
 }

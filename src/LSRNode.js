@@ -1,23 +1,23 @@
 const { client, xml } = require("@xmpp/client");
 const fs = require("fs");
 
-class LinkStateNode {
+class LSRNode {
   constructor(nodeId, password) {
     this.nodeId = nodeId;
     this.password = password;
     this.jid = null;
-    this.neighbors = [];
+    this.neighbors = {};
     this.xmpp = null;
-    this.messagesSeen = new Set();
-    this.networkTopology = {};
+    this.linkStateDB = {};
+    this.routingTable = {};
     this.sequenceNumber = 0;
+    this.messagesSeen = new Set();
     this.onlinePromise = new Promise((resolve) => {
       this.resolveOnline = resolve;
     });
 
     this.loadConfigurations();
     this.setupXMPP();
-    this.startPeriodicBroadcast();
   }
 
   loadConfigurations() {
@@ -33,23 +33,17 @@ class LinkStateNode {
 
     this.jid = namesData.config[this.nodeId];
 
-    // Convert neighbor node IDs to JIDs
-    this.neighbors = topoData.config[this.nodeId].map((neighborId) => {
+    // Convert neighbor node IDs to JIDs and assign costs
+    topoData.config[this.nodeId].forEach((neighborId) => {
       const neighborJid = namesData.config[neighborId];
       if (!neighborJid) {
         throw new Error(`No JID found for neighbor node ${neighborId}`);
       }
-      return neighborJid;
+      this.neighbors[neighborJid] = 1; // Assigning a default cost of 1
     });
 
     console.log(`[DEBUG] Node ${this.nodeId} configured with JID ${this.jid}`);
-    console.log(`[DEBUG] Neighbors: ${this.neighbors.join(", ")}`);
-  }
-
-  startPeriodicBroadcast() {
-    setInterval(() => {
-      this.broadcastLinkState();
-    }, 2000); // Broadcast every 30 seconds
+    console.log(`[DEBUG] Neighbors: ${Object.keys(this.neighbors).join(", ")}`);
   }
 
   setupXMPP() {
@@ -71,7 +65,7 @@ class LinkStateNode {
   async onConnect(address) {
     await this.xmpp.send(xml("presence"));
     this.resolveOnline();
-    this.broadcastLinkState();
+    this.schedulePeriodicTasks();
   }
 
   async sendMessage(message, recipient) {
@@ -85,6 +79,7 @@ class LinkStateNode {
   }
 
   onStanza(stanza) {
+    console.log("[DEBUG] Received stanza:", stanza.toString());
     if (stanza.is("message") && stanza.attrs.type === "chat") {
       const body = stanza.getChild("body");
       if (body) {
@@ -95,39 +90,41 @@ class LinkStateNode {
   }
 
   handleMessage(message, from) {
-    const messageId = `${message.type}-${message.from}-${message.sequenceNumber}`;
+    const messageId = `${message.type}-${message.from}-${message.to}-${message.payload}`;
     if (this.messagesSeen.has(messageId)) {
       return;
     }
     this.messagesSeen.add(messageId);
 
     switch (message.type) {
-      case "info":
-        this.handleLinkState(message);
+      case "echo":
+        this.handleEcho(message);
         break;
-      case "chat":
+      case "info":
+        this.handleLinkStateUpdate(message);
+        break;
+      case "message":
         this.handleChatMessage(message, from);
         break;
     }
   }
 
-  handleLinkState(message) {
-    console.log(
-      `[DEBUG] Node ${this.nodeId} received link state from ${message.from}`
-    );
+  handleEcho(message) {
+    if (message.to === this.jid) {
+      const rtt = Date.now() - parseFloat(message.payload);
+      console.log(
+        `[DEBUG] ECHO reply from ${message.from}, RTT: ${rtt.toFixed(3)} ms`
+      );
+    } else {
+      this.sendMessage(message, message.to);
+    }
+  }
 
-    // Update network topology
-    this.networkTopology[message.from] = message.neighbors;
-
-    // Rebroadcast to neighbors
-    this.neighbors.forEach((neighbor) => {
-      if (neighbor !== message.from) {
-        this.sendMessage(message, neighbor);
-      }
-    });
-
-    // Recalculate shortest paths
-    this.calculateShortestPaths();
+  handleLinkStateUpdate(message) {
+    const linkState = JSON.parse(message.payload);
+    this.linkStateDB[message.from] = linkState;
+    this.computeRoutingTable();
+    this.floodLinkState(message);
   }
 
   handleChatMessage(message, from) {
@@ -139,79 +136,111 @@ class LinkStateNode {
     }
   }
 
+  floodLinkState(message) {
+    Object.keys(this.neighbors).forEach((neighborJid) => {
+      if (neighborJid !== message.from) {
+        this.sendMessage(message, neighborJid);
+      }
+    });
+  }
+
   forwardMessage(message) {
     const nextHop = this.getNextHop(message.to);
     if (nextHop) {
+      message.hops = (message.hops || 0) + 1;
+      message.headers.push({ via: this.jid });
       this.sendMessage(message, nextHop);
+      console.log(`[DEBUG] Forwarded message to ${message.to} via ${nextHop}`);
     } else {
       console.log(`[ERROR] No route to ${message.to}`);
     }
   }
 
-  broadcastLinkState() {
-    const linkStateMessage = {
-      type: "info",
-      from: this.jid,
-      neighbors: this.neighbors,
-      sequenceNumber: this.sequenceNumber++,
-    };
-
-    this.neighbors.forEach((neighbor) => {
-      this.sendMessage(linkStateMessage, neighbor);
-    });
+  getNextHop(destination) {
+    return this.routingTable[destination]
+      ? this.routingTable[destination][0]
+      : null;
   }
 
-  calculateShortestPaths() {
-    // Implement Dijkstra's algorithm here
-    // This is a simplified version and should be expanded for production use
-    this.shortestPaths = {};
-    const nodes = Object.keys(this.networkTopology);
+  computeRoutingTable() {
+    const distances = {};
+    const previousNodes = {};
+    const unvisited = new Set();
 
-    nodes.forEach((node) => {
-      if (node !== this.jid) {
-        let shortestDistance = Infinity;
-        let nextHop = null;
+    // Initialize distances
+    Object.keys(this.linkStateDB).forEach((node) => {
+      distances[node] = Infinity;
+      unvisited.add(node);
+    });
+    distances[this.jid] = 0;
 
-        this.neighbors.forEach((neighbor) => {
-          if (
-            this.networkTopology[neighbor] &&
-            this.networkTopology[neighbor].includes(node)
-          ) {
-            shortestDistance = 2;
-            nextHop = neighbor;
+    while (unvisited.size > 0) {
+      const current = Array.from(unvisited).reduce((a, b) =>
+        distances[a] < distances[b] ? a : b
+      );
+
+      unvisited.delete(current);
+
+      Object.entries(this.linkStateDB[current] || {}).forEach(
+        ([neighbor, cost]) => {
+          const altDistance = distances[current] + cost;
+          if (altDistance < distances[neighbor]) {
+            distances[neighbor] = altDistance;
+            previousNodes[neighbor] = current;
           }
-        });
-
-        if (this.neighbors.includes(node)) {
-          shortestDistance = 1;
-          nextHop = node;
         }
+      );
+    }
 
-        this.shortestPaths[node] = {
-          distance: shortestDistance,
-          nextHop: nextHop,
-        };
+    // Build routing table
+    this.routingTable = {};
+    Object.keys(distances).forEach((node) => {
+      if (node !== this.jid) {
+        let path = [];
+        let current = node;
+        while (current !== this.jid) {
+          path.unshift(current);
+          current = previousNodes[current];
+        }
+        this.routingTable[node] = [path[0], distances[node]];
       }
     });
 
-    console.log(
-      `[DEBUG] Node ${this.nodeId} updated shortest paths:`,
-      this.shortestPaths
-    );
+    console.log("[DEBUG] Updated routing table:", this.routingTable);
   }
 
-  getNextHop(destination) {
-    return this.shortestPaths[destination]
-      ? this.shortestPaths[destination].nextHop
-      : null;
+  shareLinkState() {
+    this.sequenceNumber++;
+    const message = {
+      type: "info",
+      from: this.jid,
+      to: "all",
+      hops: 0,
+      headers: [],
+      payload: JSON.stringify(this.neighbors),
+      id: `ls_${this.jid}_${this.sequenceNumber}`,
+    };
+
+    Object.keys(this.neighbors).forEach((neighborJid) => {
+      this.sendMessage(message, neighborJid);
+    });
+    console.log("[DEBUG] Shared link state");
+  }
+
+  schedulePeriodicTasks() {
+    setInterval(() => {
+      this.shareLinkState();
+    }, 30000); // Share link state every 30 seconds
   }
 
   sendChatMessage(to, payload) {
     const message = {
-      type: "chat",
+      type: "message",
       from: this.jid,
       to: to,
+      hops: 0,
       payload: payload,
+      headers: [],
     };
 
     this.handleMessage(message, this.jid);
@@ -222,7 +251,7 @@ class LinkStateNode {
 async function initializeNodesSequentially(nodeConfigs) {
   const nodes = {};
   for (const config of nodeConfigs) {
-    const node = new LinkStateNode(config.nodeId, config.password);
+    const node = new LSRNode(config.nodeId, config.password);
     await node.onlinePromise;
     nodes[config.nodeId] = node;
   }
@@ -243,12 +272,12 @@ const nodeConfigs = [
 ];
 
 initializeNodesSequentially(nodeConfigs).then((nodes) => {
-  // Give some time for link state messages to propagate
+  // Wait for the network to stabilize before sending messages
   setTimeout(() => {
     // Simulate sending a message from node A to node H
     nodes["A"].sendChatMessage(
       "bca_h@alumchat.lol",
       "Hello from Node A to Node H!"
     );
-  }, 5000);
+  }, 15000); // Wait for 60 seconds
 });
