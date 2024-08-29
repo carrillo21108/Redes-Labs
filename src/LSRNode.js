@@ -255,13 +255,16 @@ class NetworkClient {
 
 async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
   const nodes = {};
+  const domain = "alumchat.lol";
+
   for (const config of nodeConfigs) {
-    const jid = namesData.config[config.nodeId];
+    const nodeId = config.nodeId;
+    const jid = namesData.config[nodeId];
     const password = config.password;
-    const neighbors = topoData.config[config.nodeId].map((id) => namesData.config[id]);
+    const neighbors = topoData.config[nodeId].map((id) => namesData.config[id]);
     const costs = {};
 
-    topoData.config[config.nodeId].forEach((neighborId) => {
+    topoData.config[nodeId].forEach((neighborId) => {
       costs[namesData.config[neighborId]] = 1; // Assuming all links have a cost of 1
     });
 
@@ -273,10 +276,10 @@ async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
       "lsr",
       true
     );
-    nodes[config.nodeId] = client;
+    nodes[nodeId] = client;
 
     await client.start();
-    console.log(`Node ${config.nodeId} initialized and online`);
+    console.log(`Node ${nodeId} initialized and online`);
   }
 
   return nodes;
@@ -316,10 +319,10 @@ initializeNodesSequentially(nodeConfigs, topoData, namesData).then(
 
     // Simulate sending a message
     setTimeout(() => {
-      nodes["F"].sendMessageTo("bca_a@alumchat.lol", {
+      nodes["A"].sendMessageTo("bca_h@alumchat.lol", {
         type: "chat",
-        from: "bca_f@alumchat.lol",
-        to: "bca_a@alumchat.lol",
+        from: "bca_a@alumchat.lol",
+        to: "bca_h@alumchat.lol",
         payload: "Hello, A!",
         hops: 0,
         headers: [],
