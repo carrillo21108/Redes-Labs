@@ -1,4 +1,4 @@
-const Strophe = require("strophe.js");
+const { client, xml } = require("@xmpp/client");
 const fs = require("fs");
 
 class LSRNode {
@@ -17,10 +17,8 @@ class LSRNode {
   }
 
   loadConfigurations() {
-    const topoData = JSON.parse(fs.readFileSync("data/topo-flood.txt", "utf8"));
-    const namesData = JSON.parse(
-      fs.readFileSync("data/names-flood.txt", "utf8")
-    );
+    const topoData = JSON.parse(fs.readFileSync("data/topo-1.txt", "utf8"));
+    const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
 
     if (topoData.type !== "topo" || !topoData.config[this.nodeId]) {
       throw new Error("Invalid topology configuration or node not found");
@@ -52,27 +50,25 @@ class LSRNode {
   }
 
   setupXMPP() {
-    this.connection = new Strophe.Connection(
-      "wss://alumchat.lol:5280/websocket"
-    );
-    this.connection.connect(this.jid, this.password, this.onConnect.bind(this));
+    this.xmpp = client({
+      service: "wss://alumchat.lol:5280/websocket",
+      domain: "alumchat.lol",
+      username: this.jid.split("@")[0],
+      password: this.password,
+    });
+
+    debug(this.xmpp, true);
+
+    this.xmpp.on("online", this.onConnect.bind(this));
+    this.xmpp.on("stanza", this.onStanza.bind(this));
+    this.xmpp.start();
   }
 
-  onConnect(status) {
-    if (status === Strophe.Status.CONNECTED) {
-      console.log("Connected as " + this.jid);
-      this.connection.addHandler(
-        this.onMessage.bind(this),
-        null,
-        "message",
-        "chat"
-      );
-      this.connection.send($pres().tree());
-      this.discoverNeighbors();
-      setInterval(() => this.broadcastLinkState(), 30000); // Update every 30 seconds
-    } else if (status === Strophe.Status.DISCONNECTED) {
-      console.log("Disconnected");
-    }
+  async onConnect(address) {
+    console.log("Connected as", address.toString());
+    await this.xmpp.send(xml("presence"));
+    this.discoverNeighbors();
+    setInterval(() => this.broadcastLinkState(), 30000);
   }
 
   discoverNeighbors() {
@@ -95,22 +91,25 @@ class LSRNode {
     return namesData.config[nodeId];
   }
 
-  sendMessage(message) {
+  async sendMessage(message) {
     message.hops = (message.hops || 0) + 1;
-    const msg = $msg({ to: message.to, from: this.jid, type: "chat" })
-      .c("body")
-      .t(JSON.stringify(message));
-    this.connection.send(msg.tree());
+    const stanza = xml(
+      "message",
+      { to: message.to, from: this.jid, type: "chat" },
+      xml("body", {}, JSON.stringify(message))
+    );
+    await this.xmpp.send(stanza);
   }
 
-  onMessage(stanza) {
-    const from = stanza.getAttribute("from");
-    const body = stanza.getElementsByTagName("body")[0];
-    if (body) {
-      const message = JSON.parse(body.textContent);
-      this.handleMessage(message);
+  onStanza(stanza) {
+    if (stanza.is("message") && stanza.getChild("body")) {
+      const from = stanza.getAttribute("from");
+      const body = stanza.getChildText("body");
+      if (body) {
+        const message = JSON.parse(body);
+        this.handleMessage(message);
+      }
     }
-    return true;
   }
 
   handleMessage(message) {
@@ -258,5 +257,71 @@ class LSRNode {
   }
 }
 
-// Usage
-const node = new LSRNode("A", "passwordA");
+async function testMessageSending(nodes, fromNodeId, toNodeId, message) {
+  const fromNode = nodes.find((node) => node.nodeId === fromNodeId);
+  const toNode = nodes.find((node) => node.nodeId === toNodeId);
+
+  if (!fromNode || !toNode) {
+    console.error("One or both nodes not found");
+    return;
+  }
+
+  console.log(
+    `Sending message from ${fromNodeId} to ${toNodeId}: "${message}"`
+  );
+  await fromNode.sendChatMessage(toNodeId, message);
+
+  // Wait for a short period to allow message propagation
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  console.log("Message sending test completed");
+}
+
+async function initializeNodesSequentially(nodeConfigs) {
+  const nodes = [];
+  for (const config of nodeConfigs) {
+    const node = new LSRNode(config.nodeId, config.password);
+    await new Promise((resolve) => {
+      node.xmpp.on("online", () => {
+        console.log(`Node ${config.nodeId} is online`);
+        resolve();
+      });
+    });
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+async function runTest() {
+  const nodeConfigs = [
+    { nodeId: "A", password: "prueba2024" },
+    { nodeId: "B", password: "prueba2024" },
+    { nodeId: "C", password: "prueba2024" },
+    { nodeId: "D", password: "prueba2024" },
+    { nodeId: "E", password: "prueba2024" },
+    { nodeId: "F", password: "prueba2024" },
+    { nodeId: "G", password: "prueba2024" },
+    { nodeId: "H", password: "prueba2024" },
+    { nodeId: "I", password: "prueba2024" },
+  ];
+
+  console.log("Initializing nodes...");
+  const nodes = await initializeNodesSequentially(nodeConfigs);
+  console.log("All nodes initialized");
+
+  // Wait for a short period to allow for initial LSR updates
+  console.log("Waiting for initial LSR updates...");
+  await new Promise((resolve) => setTimeout(resolve, 10000));
+
+  // Test message sending
+  await testMessageSending(nodes, "A", "H", "Hello from A to H!");
+
+  // Clean up: disconnect all nodes
+  for (const node of nodes) {
+    await node.xmpp.stop();
+  }
+  console.log("Test completed, all nodes disconnected");
+}
+
+// Run the test
+runTest().catch(console.error);

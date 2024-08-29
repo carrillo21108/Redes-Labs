@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "flooding": "node FloodingNode.js"
+    "flooding": "node FloodingNode.js",
+    "lsr": "node LSRNode.js"
   },
   "keywords": [],
   "author": "",

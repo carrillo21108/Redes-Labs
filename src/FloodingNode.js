@@ -39,8 +39,8 @@ class FloodingNode {
       return neighborJid;
     });
 
-    console.log(`Node ${this.nodeId} configured with JID ${this.jid}`);
-    console.log(`Neighbors: ${this.neighbors.join(", ")}`);
+    console.log(`[DEBUG] Node ${this.nodeId} configured with JID ${this.jid}`);
+    console.log(`[DEBUG] Neighbors: ${this.neighbors.join(", ")}`);
   }
 
   setupXMPP() {
@@ -54,28 +54,23 @@ class FloodingNode {
 
     this.xmpp.on("online", this.onConnect.bind(this));
     this.xmpp.on("stanza", this.onStanza.bind(this));
-    this.xmpp.on("error", (err) => console.error("XMPP error:", err));
+    this.xmpp.on("error", (err) => console.error("[ERROR] XMPP error:", err));
 
     this.xmpp.start().catch(console.error);
   }
 
   async onConnect(address) {
-    console.log("Connected as " + address.toString());
     await this.xmpp.send(xml("presence"));
     this.resolveOnline();
   }
 
-  async sendMessageToJid(jid, message) {
-    await this.sendMessage({ ...message, to: jid });
-  }
-
-  async sendMessage(message) {
-    message.hops = (message.hops || 0) + 1;
+  async sendMessage(message, immediateRecipient) {
     const stanza = xml(
       "message",
-      { to: message.to, from: this.jid, type: "chat" },
+      { to: immediateRecipient, from: this.jid, type: "chat" },
       xml("body", {}, JSON.stringify(message))
     );
+
     await this.xmpp.send(stanza);
   }
 
@@ -84,45 +79,54 @@ class FloodingNode {
       const body = stanza.getChild("body");
       if (body) {
         const message = JSON.parse(body.text());
-        this.handleMessage(message);
+
+        this.handleMessage(message, stanza.attrs.from);
       }
     }
   }
 
-  handleMessage(message) {
-    const messageId = `${message.type}-${message.from}-${message.to}`;
-    if (this.messagesSeen.has(messageId)) return;
+  handleMessage(message, from) {
+    const messageId = `${message.type}-${message.from}-${message.to}-${message.payload}`;
+    ``;
+    if (this.messagesSeen.has(messageId)) {
+      return;
+    }
     this.messagesSeen.add(messageId);
-
-    console.log(`Received message: ${JSON.stringify(message)}`);
 
     switch (message.type) {
       case "hello":
         this.handleHello(message);
         break;
       case "message":
-        this.handleChatMessage(message);
+        this.handleChatMessage(message, from);
         break;
     }
   }
 
   handleHello(message) {
-    console.log(`Received hello from ${message.from}`);
+    console.log(
+      `[DEBUG] Node ${this.nodeId} received hello from ${message.from}`
+    );
   }
 
-  handleChatMessage(message) {
+  handleChatMessage(message, from) {
     if (message.to === this.jid) {
-      console.log(`Message for me: ${message.payload}`);
+      console.log("Message received:", message.payload);
+      console.log("Body:", JSON.stringify(message));
     } else {
-      this.floodMessage(message);
+      this.floodMessage(message, from);
     }
   }
 
-  floodMessage(message) {
+  floodMessage(message, from) {
     this.neighbors.forEach((neighborJid) => {
-      if (neighborJid !== message.from) {
-        const forwardedMessage = { ...message, hops: message.hops + 1 };
-        this.sendMessage({ ...forwardedMessage, to: neighborJid });
+      if (neighborJid !== from) {
+        const forwardedMessage = {
+          ...message,
+          hops: (message.hops || 0) + 1,
+        };
+
+        this.sendMessage(forwardedMessage, neighborJid);
       }
     });
   }
@@ -136,17 +140,18 @@ class FloodingNode {
       payload: payload,
       headers: [],
     };
+
     this.handleMessage(message);
   }
 }
 
 // Function to initialize nodes sequentially
 async function initializeNodesSequentially(nodeConfigs) {
-  const nodes = [];
+  const nodes = {};
   for (const config of nodeConfigs) {
     const node = new FloodingNode(config.nodeId, config.password);
     await node.onlinePromise;
-    nodes.push(node);
+    nodes[config.nodeId] = node;
   }
   return nodes;
 }
@@ -165,8 +170,9 @@ const nodeConfigs = [
 ];
 
 initializeNodesSequentially(nodeConfigs).then((nodes) => {
-  nodes[0].sendMessageToJid("bca_h@alumchat.lol", {
-    type: "message",
-    from: "bca_a@alumchat.lol",
-  });
+  // Simulate sending a message from node A to node H
+  nodes["A"].sendChatMessage(
+    "bca_h@alumchat.lol",
+    "Hello from Node A to Node H!"
+  );
 });
