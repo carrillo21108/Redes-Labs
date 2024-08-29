@@ -2,6 +2,25 @@ const { client, xml } = require("@xmpp/client");
 const uuid = require("uuid");
 const fs = require("fs");
 
+class PriorityQueue {
+  constructor() {
+    this.elements = [];
+  }
+
+  enqueue(element, priority) {
+    this.elements.push({ element, priority });
+    this.elements.sort((a, b) => a.priority - b.priority);
+  }
+
+  dequeue() {
+    return this.elements.shift();
+  }
+
+  isEmpty() {
+    return this.elements.length === 0;
+  }
+}
+
 class NetworkClient {
   constructor(
     jid,
@@ -19,15 +38,21 @@ class NetworkClient {
       password: password,
     });
 
+    this.isOnline = false;
+    this.onlinePromise = new Promise((resolve) => {
+      this.resolveOnlinePromise = resolve;
+    });
+
     this.jid = jid;
     this.neighbors = neighbors;
     this.costs = costs;
     this.routingTable = {};
     this.linkStateDB = { [this.jid]: this.costs };
-    this.receivedMessages = {};
     this.messageLog = [];
     this.mode = mode;
     this.sequenceNumber = 0;
+    this.receivedMessages = new Set();
+
     this.verbose = verbose;
 
     this.xmpp.on("online", this.onOnline.bind(this));
@@ -54,45 +79,14 @@ class NetworkClient {
   async start() {
     await this.xmpp.start();
   }
-
   async onOnline() {
     this.log("INFO", `Session started (Mode: ${this.mode})`);
     await this.xmpp.send(xml("presence"));
-    await this.discoverNeighbors();
-    if (this.mode === "lsr") {
-      await this.shareLinkState();
-    }
+    this.isOnline = true;
+    this.resolveOnlinePromise();
   }
-
-  async discoverNeighbors() {
-    for (const neighbor of this.neighbors) {
-      await this.sendEcho(neighbor);
-    }
-  }
-
-  async sendEcho(toJid) {
-    const message = {
-      type: "echo",
-      from: this.jid,
-      to: toJid,
-      hops: 0,
-      headers: [],
-      payload: Date.now().toString(),
-      id: uuid.v4(),
-    };
-    await this.sendMessageTo(toJid, JSON.stringify(message));
-  }
-
   async sendMessageTo(toJid, message) {
-    if (typeof message === "string") {
-      message = JSON.parse(message);
-    }
-
-    if (!message.id) {
-      message.id = uuid.v4();
-    }
-
-    if (["echo", "info"].includes(message.type)) {
+    if (message.type === "info") {
       await this.xmpp.send(
         xml(
           "message",
@@ -100,27 +94,21 @@ class NetworkClient {
           xml("body", {}, JSON.stringify(message))
         )
       );
-      this.log("INFO", `Sent a ${message.type} message to ${toJid}`);
     } else {
-      if (this.mode === "lsr") {
-        const nextHop = this.getNextHop(toJid);
-        if (nextHop) {
-          message.hops += 1;
-          message.headers.push({ via: this.jid });
-          await this.xmpp.send(
-            xml(
-              "message",
-              { to: nextHop, type: "chat" },
-              xml("body", {}, JSON.stringify(message))
-            )
-          );
-          this.log("IMPORTANT", `Forwarded message to ${toJid} via ${nextHop}`);
-        } else {
-          this.log("ERROR", `No route to ${toJid}`);
-        }
-      } else if (this.mode === "flooding") {
-        this.log("IMPORTANT", `Initiating flood for message: ${message.id}`);
-        await this.floodMessage(message, this.jid);
+      const nextHop = this.getNextHop(toJid);
+      if (nextHop) {
+        message.hops += 1;
+        message.headers.push({ via: this.jid });
+        await this.xmpp.send(
+          xml(
+            "message",
+            { to: nextHop, type: "chat" },
+            xml("body", {}, JSON.stringify(message))
+          )
+        );
+        this.log("IMPORTANT", `Forwarded message to ${toJid} via ${nextHop}`);
+      } else {
+        this.log("ERROR", `No route to ${toJid}`);
       }
     }
   }
@@ -131,12 +119,7 @@ class NetworkClient {
       const from = stanza.attrs.from.split("/")[0];
 
       if (messageBody.type === "info") {
-        this.linkStateDB[messageBody.from] = JSON.parse(messageBody.payload);
-        this.computeRoutingTable();
         await this.floodMessage(messageBody, from);
-        // this.logNetworkState();
-      } else if (messageBody.type === "echo") {
-        this.handleEcho(messageBody);
       } else {
         this.log(
           "IMPORTANT",
@@ -153,11 +136,7 @@ class NetworkClient {
           );
           this.log("IMPORTANT", `Number of hops: ${messageBody.hops}`);
         } else {
-          if (this.mode === "flooding") {
-            await this.floodMessage(messageBody, from);
-          } else {
-            await this.sendMessageTo(messageBody.to, messageBody);
-          }
+          await this.sendMessageTo(messageBody.to, messageBody);
         }
       }
     }
@@ -168,43 +147,52 @@ class NetworkClient {
     return route ? route[0] : null;
   }
 
+  updateLinkStateDB(sourceJid, costs) {
+    this.linkStateDB[sourceJid] = costs;
+    this.log("INFO", `Updated Link State DB for ${sourceJid}`);
+  }
+
   async floodMessage(message, sender) {
-    if (!this.receivedMessages[message.id]) {
-      this.receivedMessages[message.id] = Date.now();
-      this.log("INFO", `Received flood message: ${message.id}`);
+    if (this.receivedMessages.has(message.id)) {
+      return;
+    }
+    this.receivedMessages.add(message.id);
 
-      if (!message || !message.headers) return;
-
-      if (!message.headers.some((header) => header.via === this.jid)) {
-        message.hops += 1;
-        message.headers.push({ via: this.jid });
-
-        for (const neighbor of this.neighbors) {
-          if (
-            neighbor !== sender &&
-            !message.headers.some((header) => header.via === neighbor)
-          ) {
-            await this.xmpp.send(
-              xml(
-                "message",
-                { to: neighbor, type: "chat" },
-                xml("body", {}, JSON.stringify(message))
-              )
-            );
-            this.log("INFO", `Forwarded flood message to ${neighbor}`);
-          }
-        }
+    let parsed;
+    try {
+      if (typeof message.payload === "string") {
+        parsed = JSON.parse(message.payload);
       } else {
-        this.log(
-          "IMPORTANT",
-          `Stopping flood: node ${this.jid} already in path`
-        );
+        parsed = message.payload;
+      }
+
+      if (Array.isArray(parsed)) {
+        const transformed = {};
+        for (const item of parsed) {
+          transformed[item.nodeJid] = item.cost;
+        }
+        parsed = transformed;
+      }
+    } catch (error) {
+      console.error("Error parsing payload:", error);
+      return;
+    }
+
+    this.updateLinkStateDB(message.from, parsed);
+
+    // Flood to all neighbors except the sender
+    for (const neighbor of this.neighbors) {
+      if (neighbor !== sender) {
+        await this.sendMessageTo(neighbor, message);
       }
     }
+
+    this.computeRoutingTable();
   }
 
   async shareLinkState() {
     this.sequenceNumber += 1;
+
     const message = {
       type: "info",
       from: this.jid,
@@ -214,15 +202,19 @@ class NetworkClient {
       payload: JSON.stringify(this.costs),
       id: `ls_${this.jid}_${this.sequenceNumber}`,
     };
+
     for (const neighbor of this.neighbors) {
-      await this.sendMessageTo(neighbor, message);
+      await this.xmpp.send(
+        xml(
+          "message",
+          { to: neighbor, type: "chat" },
+          xml("body", {}, JSON.stringify(message))
+        )
+      );
     }
-    // this.log("INFO", `Shared link state: ${JSON.stringify(this.costs)}`);
-    // this.logNetworkState();
   }
 
   computeRoutingTable() {
-    this.log("INFO", "Computing routing table");
     this.routingTable = {};
 
     const distances = {};
@@ -273,32 +265,6 @@ class NetworkClient {
         }
       }
     }
-
-    // this.log(
-    //   "INFO",
-    //   `Link State Database: ${JSON.stringify(this.linkStateDB)}`
-    // );
-    // this.log(
-    //   "INFO",
-    //   `Computed Routing Table: ${JSON.stringify(this.routingTable)}`
-    // );
-  }
-
-  handleEcho(message) {
-    if (message.to === this.jid) {
-      const rtt = Date.now() - parseInt(message.payload);
-      this.log("INFO", `ECHO reply from ${message.from}, RTT: ${rtt} ms`);
-    } else {
-      this.sendMessageTo(message.to, message);
-    }
-  }
-
-  schedulePeriodicTasks() {
-    setInterval(() => {
-      if (this.mode === "lsr") {
-        this.shareLinkState();
-      }
-    }, 30000); // Share link state every 30 seconds
   }
 
   onError(err) {
@@ -306,40 +272,36 @@ class NetworkClient {
   }
 }
 
-function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
+async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
   const nodes = {};
   const domain = "alumchat.lol";
 
-  return nodeConfigs.reduce((promise, config) => {
-    return promise.then(() => {
-      const nodeId = config.nodeId;
-      const jid = namesData.config[nodeId];
-      const password = config.password;
-      const neighbors = topoData.config[nodeId].map(
-        (id) => namesData.config[id]
-      );
-      const costs = {};
+  for (const config of nodeConfigs) {
+    const nodeId = config.nodeId;
+    const jid = namesData.config[nodeId];
+    const password = config.password;
+    const neighbors = topoData.config[nodeId].map((id) => namesData.config[id]);
+    const costs = {};
 
-      topoData.config[nodeId].forEach((neighborId) => {
-        costs[namesData.config[neighborId]] = 1; // Assuming all links have a cost of 1
-      });
-
-      const client = new NetworkClient(
-        jid,
-        password,
-        neighbors,
-        costs,
-        "lsr",
-        true
-      );
-      nodes[nodeId] = client;
-
-      return client.start().then(() => {
-        console.log(`Node ${nodeId} initialized`);
-        return nodes;
-      });
+    topoData.config[nodeId].forEach((neighborId) => {
+      costs[namesData.config[neighborId]] = 1; // Assuming all links have a cost of 1
     });
-  }, Promise.resolve());
+
+    const client = new NetworkClient(
+      jid,
+      password,
+      neighbors,
+      costs,
+      "lsr",
+      true
+    );
+    nodes[nodeId] = client;
+
+    await client.start();
+    console.log(`Node ${nodeId} initialized and online`);
+  }
+
+  return nodes;
 }
 
 // Usage
@@ -385,24 +347,32 @@ const namesData = {
   },
 };
 
-initializeNodesSequentially(nodeConfigs, topoData, namesData).then((nodes) => {
-  // Wait for the network to stabilize before sending messages
-  setTimeout(() => {
+initializeNodesSequentially(nodeConfigs, topoData, namesData).then(
+  async (nodes) => {
+    console.log("All nodes are online. Starting LSR propagation...");
+
+    // Start LSR propagation for all nodes
     for (const nodeId in nodes) {
-      nodes[nodeId].logNetworkState();
+      await nodes[nodeId].shareLinkState();
     }
 
-    // Simulate sending a message from node A to node H
-    nodes["A"].sendMessageTo(
-      "bca_f@alumchat.lol",
-      JSON.stringify({
+    // Wait for routing tables to stabilize
+    setTimeout(() => {
+      for (const nodeId in nodes) {
+        nodes[nodeId].logNetworkState();
+      }
+    }, 10000);
+
+    // Simulate sending a message
+    setTimeout(() => {
+      nodes["F"].sendMessageTo("bca_e@alumchat.lol", {
         type: "chat",
-        from: "bca_h@alumchat.lol",
-        to: "bca_f@alumchat.lol",
-        payload: "Hello from Node B to Node G!",
+        from: "bca_f@alumchat.lol",
+        to: "bca_e@alumchat.lol",
+        payload: "Hello, E!",
         hops: 0,
         headers: [],
-      })
-    );
-  }, 10000); // Wait for 15 seconds
-});
+      });
+    }, 15000);
+  }
+);
