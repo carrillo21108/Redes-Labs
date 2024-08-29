@@ -1,8 +1,9 @@
 const { client, xml } = require("@xmpp/client");
 const uuid = require("uuid");
 const fs = require("fs");
+const readline = require("readline");
 
-class NetworkClient {
+class LRSNode {
   constructor(
     jid,
     password,
@@ -268,7 +269,7 @@ async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
       costs[namesData.config[neighborId]] = 1; // Assuming all links have a cost of 1
     });
 
-    const client = new NetworkClient(
+    const client = new LRSNode(
       jid,
       password,
       neighbors,
@@ -301,32 +302,62 @@ const nodeConfigs = [
 const topoData = JSON.parse(fs.readFileSync("data/topo-1.txt", "utf8"));
 const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
 
-initializeNodesSequentially(nodeConfigs, topoData, namesData).then(
-  async (nodes) => {
-    console.log("All nodes are online. Starting LSR propagation...");
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
 
-    // Start LSR propagation for all nodes
-    for (const nodeId in nodes) {
-      await nodes[nodeId].shareLinkState();
-    }
+function question(query) {
+  return new Promise(resolve => {
+    rl.question(query, (answer) => {
+      resolve(answer);
+    });
+  });
+}
 
-    // Wait for routing tables to stabilize
-    setTimeout(() => {
-      for (const nodeId in nodes) {
-        nodes[nodeId].logNetworkState();
-      }
-    }, 10000);
-
-    // Simulate sending a message
-    setTimeout(() => {
-      nodes["A"].sendMessageTo("bca_h@alumchat.lol", {
-        type: "chat",
-        from: "bca_a@alumchat.lol",
-        to: "bca_h@alumchat.lol",
-        payload: "Hello, A!",
-        hops: 0,
-        headers: [],
-      });
-    }, 15000);
+async function initializeNode(nodeConfigs, topoData, namesData, selectedNodeId) {
+  const filteredNodeConfig = nodeConfigs.filter(
+    (config) => config.nodeId === selectedNodeId
+  );
+  if (filteredNodeConfig.length === 0) {
+    console.log(`Node ${selectedNodeId} not found.`);
+    return;
   }
-);
+
+  const nodes = await initializeNodesSequentially(filteredNodeConfig, topoData, namesData);
+
+  await question("Press any key when all nodes are connected... ");
+  console.log("Starting LSR propagation...");
+  await nodes[selectedNodeId].shareLinkState();
+
+  console.log("Loading... ");
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  nodes[selectedNodeId].logNetworkState();
+
+  const role = await question("Enter the role (sender/receiver): ");
+
+  if (role === "sender") {
+    const destinationNodeId = await question("Enter the destination Node ID: ");
+    const message = await question("Enter the message: ");
+
+    nodes[selectedNodeId].sendMessageTo(namesData.config[destinationNodeId], {
+      type: "chat",
+      from: namesData.config[selectedNodeId],
+      to: namesData.config[destinationNodeId],
+      payload: message,
+      hops: 0,
+      headers: [],
+    });
+  } else {
+    console.log("Waiting for messages...");
+  }
+}
+
+async function waitForNodeSelection() {
+  const nodeId = await question("Enter the Node ID to initialize: ");
+  await initializeNode(nodeConfigs, topoData, namesData, nodeId);
+  rl.close();
+}
+
+waitForNodeSelection();

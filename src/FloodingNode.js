@@ -1,5 +1,6 @@
 const { client, xml } = require("@xmpp/client");
 const fs = require("fs");
+const readline = require("readline");
 
 class FloodingNode {
   constructor(nodeId, password) {
@@ -174,11 +175,53 @@ const nodeConfigs = [
   { nodeId: "I", password: "prueba2024" },
 ];
 
-initializeNodesSequentially(nodeConfigs).then(
-  (nodes) => {
-  // Simulate sending a message from node A to node H
-  nodes["A"].sendChatMessage(
-    "bca_h@alumchat.lol",
-    "Hello from Node A to Node H!"
-  );
+const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
 });
+
+function question(query) {
+  return new Promise(resolve => {
+    rl.question(query, (answer) => {
+      resolve(answer);
+    });
+  });
+}
+
+async function initializeNode(nodeConfigs, selectedNodeId) {
+  const filteredNodeConfig = nodeConfigs.filter(
+    (config) => config.nodeId === selectedNodeId
+  );
+  if (filteredNodeConfig.length === 0) {
+    console.log(`Node ${selectedNodeId} not found.`);
+    return;
+  }
+
+  const nodes = await initializeNodesSequentially(filteredNodeConfig);
+
+  await question("Press any key when all nodes are connected... ");
+  const role = await question("Enter the role (sender/receiver): ");
+
+  if (role === "sender") {
+    const destinationNodeId = await question("Enter the destination Node ID: ");
+    const message = await question("Enter the message: ");
+
+    nodes[selectedNodeId].sendChatMessage(
+      namesData.config[destinationNodeId],
+      message
+    );
+  } else {
+    console.log("Waiting for messages...");
+  }
+}
+
+async function waitForNodeSelection() {
+  const nodeId = await question("Enter the Node ID to initialize: ");
+  await initializeNode(nodeConfigs, nodeId);
+  rl.close();
+}
+
+waitForNodeSelection();
