@@ -2,25 +2,6 @@ const { client, xml } = require("@xmpp/client");
 const uuid = require("uuid");
 const fs = require("fs");
 
-class PriorityQueue {
-  constructor() {
-    this.elements = [];
-  }
-
-  enqueue(element, priority) {
-    this.elements.push({ element, priority });
-    this.elements.sort((a, b) => a.priority - b.priority);
-  }
-
-  dequeue() {
-    return this.elements.shift();
-  }
-
-  isEmpty() {
-    return this.elements.length === 0;
-  }
-}
-
 class NetworkClient {
   constructor(
     jid,
@@ -274,16 +255,13 @@ class NetworkClient {
 
 async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
   const nodes = {};
-  const domain = "alumchat.lol";
-
   for (const config of nodeConfigs) {
-    const nodeId = config.nodeId;
-    const jid = namesData.config[nodeId];
+    const jid = namesData.config[config.nodeId];
     const password = config.password;
-    const neighbors = topoData.config[nodeId].map((id) => namesData.config[id]);
+    const neighbors = topoData.config[config.nodeId].map((id) => namesData.config[id]);
     const costs = {};
 
-    topoData.config[nodeId].forEach((neighborId) => {
+    topoData.config[config.nodeId].forEach((neighborId) => {
       costs[namesData.config[neighborId]] = 1; // Assuming all links have a cost of 1
     });
 
@@ -295,10 +273,10 @@ async function initializeNodesSequentially(nodeConfigs, topoData, namesData) {
       "lsr",
       true
     );
-    nodes[nodeId] = client;
+    nodes[config.nodeId] = client;
 
     await client.start();
-    console.log(`Node ${nodeId} initialized and online`);
+    console.log(`Node ${config.nodeId} initialized and online`);
   }
 
   return nodes;
@@ -317,35 +295,8 @@ const nodeConfigs = [
   { nodeId: "I", password: "prueba2024" },
 ];
 
-const topoData = {
-  type: "topo",
-  config: {
-    A: ["B", "I", "C"],
-    B: ["A", "F"],
-    C: ["A", "D"],
-    D: ["I", "C", "E", "F"],
-    E: ["D", "G"],
-    F: ["B", "D", "G", "H"],
-    G: ["F", "E"],
-    H: ["F"],
-    I: ["A", "D"],
-  },
-};
-
-const namesData = {
-  type: "names",
-  config: {
-    A: "bca_a@alumchat.lol",
-    B: "bca_b@alumchat.lol",
-    C: "bca_c@alumchat.lol",
-    D: "bca_d@alumchat.lol",
-    E: "bca_e@alumchat.lol",
-    F: "bca_f@alumchat.lol",
-    G: "bca_g@alumchat.lol",
-    H: "bca_h@alumchat.lol",
-    I: "bca_i@alumchat.lol",
-  },
-};
+const topoData = JSON.parse(fs.readFileSync("data/topo-1.txt", "utf8"));
+const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
 
 initializeNodesSequentially(nodeConfigs, topoData, namesData).then(
   async (nodes) => {
@@ -365,11 +316,11 @@ initializeNodesSequentially(nodeConfigs, topoData, namesData).then(
 
     // Simulate sending a message
     setTimeout(() => {
-      nodes["F"].sendMessageTo("bca_e@alumchat.lol", {
+      nodes["F"].sendMessageTo("bca_a@alumchat.lol", {
         type: "chat",
         from: "bca_f@alumchat.lol",
-        to: "bca_e@alumchat.lol",
-        payload: "Hello, E!",
+        to: "bca_a@alumchat.lol",
+        payload: "Hello, A!",
         hops: 0,
         headers: [],
       });

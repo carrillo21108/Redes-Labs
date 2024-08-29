@@ -149,7 +149,12 @@ class FloodingNode {
 async function initializeNodesSequentially(nodeConfigs) {
   const nodes = {};
   for (const config of nodeConfigs) {
-    const node = new FloodingNode(config.nodeId, config.password);
+
+    const node = new FloodingNode(
+      config.nodeId,
+      config.password
+    );
+
     await node.onlinePromise;
     nodes[config.nodeId] = node;
   }
@@ -169,7 +174,8 @@ const nodeConfigs = [
   { nodeId: "I", password: "prueba2024" },
 ];
 
-initializeNodesSequentially(nodeConfigs).then((nodes) => {
+initializeNodesSequentially(nodeConfigs).then(
+  (nodes) => {
   // Simulate sending a message from node A to node H
   nodes["A"].sendChatMessage(
     "bca_h@alumchat.lol",
