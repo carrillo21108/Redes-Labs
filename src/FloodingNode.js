@@ -6,12 +6,12 @@ class FloodingNode {
   constructor(nodeId, password) {
     this.nodeId = nodeId;
     this.password = password;
-    this.jid = null;
-    this.neighbors = [];
-    this.xmpp = null;
-    this.messagesSeen = new Set();
+    this.jid = null; // JID will be set in loadConfigurations
+    this.neighbors = []; // List of neighbor JIDs
+    this.xmpp = null; // XMPP client instance
+    this.messagesSeen = new Set(); // Track seen messages to prevent loops
     this.onlinePromise = new Promise((resolve) => {
-      this.resolveOnline = resolve;
+      this.resolveOnline = resolve; // Resolve when the node is online
     });
 
     this.loadConfigurations();
@@ -29,7 +29,7 @@ class FloodingNode {
       throw new Error("Invalid names configuration or node not found");
     }
 
-    this.jid = namesData.config[this.nodeId];
+    this.jid = namesData.config[this.nodeId]; // Set the JID for this node
 
     // Convert neighbor node IDs to JIDs
     this.neighbors = topoData.config[this.nodeId].map((neighborId) => {
@@ -37,7 +37,7 @@ class FloodingNode {
       if (!neighborJid) {
         throw new Error(`No JID found for neighbor node ${neighborId}`);
       }
-      return neighborJid;
+      return neighborJid; // Add neighbor JID to the list
     });
 
     console.log(`[DEBUG] Node ${this.nodeId} configured with JID ${this.jid}`);
@@ -47,59 +47,58 @@ class FloodingNode {
   setupXMPP() {
     const [username, domain] = this.jid.split("@");
     this.xmpp = client({
-      service: `ws://${domain}:7070/ws/`,
+      service: `ws://${domain}:7070/ws/`, // XMPP WebSocket service URL
       domain: domain,
-      username: username,
-      password: this.password,
+      username: username, // XMPP username derived from JID
+      password: this.password, // Password for authentication
     });
 
-    this.xmpp.on("online", this.onConnect.bind(this));
-    this.xmpp.on("stanza", this.onStanza.bind(this));
-    this.xmpp.on("error", (err) => console.error("[ERROR] XMPP error:", err));
+    this.xmpp.on("online", this.onConnect.bind(this)); // Handle connection
+    this.xmpp.on("stanza", this.onStanza.bind(this)); // Handle incoming stanzas
+    this.xmpp.on("error", (err) => console.error("[ERROR] XMPP error:", err)); // Handle errors
 
-    this.xmpp.start().catch(console.error);
+    this.xmpp.start().catch(console.error); // Start the XMPP client
   }
 
   async onConnect(address) {
-    await this.xmpp.send(xml("presence"));
-    this.resolveOnline();
+    await this.xmpp.send(xml("presence")); // Announce presence
+    this.resolveOnline(); // Resolve the online promise
   }
 
   async sendMessage(message, immediateRecipient) {
     const stanza = xml(
       "message",
-      { to: immediateRecipient, from: this.jid, type: "chat" },
-      xml("body", {}, JSON.stringify(message))
+      { to: immediateRecipient, from: this.jid, type: "chat" }, // Construct XMPP message stanza
+      xml("body", {}, JSON.stringify(message)) // Attach the message payload
     );
 
-    await this.xmpp.send(stanza);
+    await this.xmpp.send(stanza); // Send the stanza
   }
 
   onStanza(stanza) {
     if (stanza.is("message") && stanza.attrs.type === "chat") {
       const body = stanza.getChild("body");
       if (body) {
-        const message = JSON.parse(body.text());
+        const message = JSON.parse(body.text()); // Parse the incoming message
 
-        this.handleMessage(message, stanza.attrs.from);
+        this.handleMessage(message, stanza.attrs.from); // Handle the message
       }
     }
   }
 
   handleMessage(message, from) {
     const messageId = `${message.type}-${message.from}-${message.to}-${message.payload}`;
-    ``;
     if (this.messagesSeen.has(messageId)) {
-      return;
+      return; // Ignore duplicate messages
     }
-    this.messagesSeen.add(messageId);
+    this.messagesSeen.add(messageId); // Mark the message as seen
 
     switch (message.type) {
       case "hello":
-        this.handleHello(message);
+        this.handleHello(message); // Handle hello messages
         break;
       case "message":
-        this.handleChatMessage(message, from);
+        this.handleChatMessage(message, from); // Handle chat messages
         break;
     }
   }
@@ -112,10 +111,10 @@ class FloodingNode {
 
   handleChatMessage(message, from) {
     if (message.to === this.jid) {
-      console.log("Message received:", message.payload);
+      console.log("Message received:", message.payload); // Display the message
       console.log("Body:", JSON.stringify(message));
     } else {
-      this.floodMessage(message, from);
+      this.floodMessage(message, from); // Forward the message to neighbors
     }
   }
 
@@ -124,10 +123,10 @@ class FloodingNode {
       if (neighborJid !== from) {
         const forwardedMessage = {
           ...message,
-          hops: (message.hops || 0) + 1,
+          hops: (message.hops || 0) + 1, // Increment the hop count
         };
 
-        this.sendMessage(forwardedMessage, neighborJid);
+        this.sendMessage(forwardedMessage, neighborJid); // Send to neighbor
       }
     });
   }
@@ -142,7 +141,7 @@ class FloodingNode {
       headers: [],
     };
 
-    this.handleMessage(message);
+    this.handleMessage(message); // Process and flood the message
   }
 }
 
@@ -156,23 +155,21 @@ async function initializeNodesSequentially(nodeConfigs) {
       config.password
     );
 
-    await node.onlinePromise;
-    nodes[config.nodeId] = node;
+    await node.onlinePromise; // Wait until the node is online
+    nodes[config.nodeId] = node; // Store the initialized node
   }
-  return nodes;
+  return nodes; // Return the initialized nodes
 }
 
 // Usage
+const password = "prueba2024";
 const nodeConfigs = [
-  { nodeId: "A", password: "prueba2024" },
-  { nodeId: "B", password: "prueba2024" },
-  { nodeId: "C", password: "prueba2024" },
-  { nodeId: "D", password: "prueba2024" },
-  { nodeId: "E", password: "prueba2024" },
-  { nodeId: "F", password: "prueba2024" },
-  { nodeId: "G", password: "prueba2024" },
-  { nodeId: "H", password: "prueba2024" },
-  { nodeId: "I", password: "prueba2024" },
+  { nodeId: "A", password },
+  { nodeId: "B", password },
+  { nodeId: "C", password },
+  { nodeId: "D", password },
+  { nodeId: "E", password },
+  { nodeId: "F", password },
 ];
 
 const namesData = JSON.parse(fs.readFileSync("data/names-1.txt", "utf8"));
@@ -186,7 +183,7 @@ const rl = readline.createInterface({
 function question(query) {
   return new Promise(resolve => {
     rl.question(query, (answer) => {
-      resolve(answer);
+      resolve(answer); // Resolve with user's input
     });
   });
 }
