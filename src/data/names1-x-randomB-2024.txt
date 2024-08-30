@@ -1,11 +1,11 @@
 {
     "type":"names",
     "config": {
-        'A':'bca_a@alumchat.lol',
-        'B': 'bca_b@alumchat.lol',
-        'C': 'bca_c@alumchat.lol',
-        'D': 'bca_d@alumchat.lol',
-        'E': 'bca_e@alumchat.lol',
-        'F': 'bca_f@alumchat.lol'
+        "A": "bca_a@alumchat.lol",
+        "B": "bca_b@alumchat.lol",
+        "C": "bca_c@alumchat.lol",
+        "D": "bca_d@alumchat.lol",
+        "E": "bca_e@alumchat.lol",
+        "F": "bca_f@alumchat.lol"
     }
 }

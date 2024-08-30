@@ -299,8 +299,8 @@ const nodeConfigs = [
   { nodeId: "F", password },
 ];
 
-const topoData = JSON.parse(fs.readFileSync("data/topo1-x-randomB.txt", "utf8"));
-const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB.txt", "utf8"));
+const topoData = JSON.parse(fs.readFileSync("data/topo1-x-randomB-2024.txt", "utf8"));
+const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB-2024.txt", "utf8"));
 
 const rl = readline.createInterface({
   input: process.stdin,

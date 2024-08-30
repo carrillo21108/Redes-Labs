@@ -19,8 +19,8 @@ class FloodingNode {
   }
 
   loadConfigurations() {
-    const topoData = JSON.parse(fs.readFileSync("data/topo1-x-randomB.txt", "utf8"));
-    const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB.txt", "utf8"));
+    const topoData = JSON.parse(fs.readFileSync("data/topo1-x-randomB-2024.txt", "utf8"));
+    const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB-2024.txt", "utf8"));
 
     if (topoData.type !== "topo" || !topoData.config[this.nodeId]) {
       throw new Error("Invalid topology configuration or node not found");
@@ -172,7 +172,7 @@ const nodeConfigs = [
   { nodeId: "F", password },
 ];
 
-const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB.txt", "utf8"));
+const namesData = JSON.parse(fs.readFileSync("data/names1-x-randomB-2024.txt", "utf8"));
 
 const rl = readline.createInterface({
   input: process.stdin,
