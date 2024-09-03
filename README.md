@@ -14,17 +14,41 @@ To install the project, follow these steps:
    ```
    git clone https://github.com/carrillo21108/Redes-Labs.git
    ```
-2. Navigate to the project directory
-   ```
-   cd src
-   ```
-3. Switch to the Lab03 branch
+2. Switch to the Lab03 branch
    ```
    git checkout Lab03
+   ```
+3. Navigate to the project directory
+   ```
+   cd src
    ```
 4. Install the dependencies
    ```
    npm install
+   ```
+## Alternative: Dockerfile
+
+To run the project using docker, follow these steps:
+
+1. Clone the repository
+   ```
+   git clone https://github.com/carrillo21108/Redes-Labs.git
+   ```
+2. Switch to the Lab03 branch
+   ```
+   git checkout Lab03
+   ```
+3. Navigate to the project directory
+   ```
+   cd src
+   ```
+4. Build image
+   ```
+   docker build -t lab04 .
+   ```
+5. Run image
+   ```
+   docker run -it lab04
    ```
 
 ## Running the Algorithms
