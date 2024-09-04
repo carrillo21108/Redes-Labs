@@ -114,6 +114,7 @@ class FloodingNode {
       console.log("Message received:", message.payload); // Display the message
       console.log("Body:", JSON.stringify(message));
     } else {
+      console.log("Forwarding message:", message.payload); // Display the message
       this.floodMessage(message, from); // Forward the message to neighbors
     }
   }
